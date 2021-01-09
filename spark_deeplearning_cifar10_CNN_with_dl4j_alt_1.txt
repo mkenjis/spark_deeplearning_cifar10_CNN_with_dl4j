@@ -1,0 +1,196 @@
+// download the com.twelvemonkeys.imageio package to avoid error below
+//
+// spark-shell --packages com.twelvemonkeys.imageio:imageio-core:3.1.1
+//
+// and copy the com.twelvemonkeys.imageio_imageio-core-3.1.1.jar downloaded
+//
+// cp com.twelvemonkeys.imageio_imageio-core-3.1.1.jar $SPARK_HOME/jars
+//
+
+scala> val imageReader = new ImageRecordReader(32, 32, false)
+java.lang.NoClassDefFoundError: com/twelvemonkeys/imageio/spi/ImageReaderSpiBase
+  at java.lang.ClassLoader.defineClass1(Native Method)
+  at java.lang.ClassLoader.defineClass(ClassLoader.java:763)
+  at java.security.SecureClassLoader.defineClass(SecureClassLoader.java:142)
+  at java.net.URLClassLoader.defineClass(URLClassLoader.java:467)
+  at java.net.URLClassLoader.access$100(URLClassLoader.java:73)
+  at java.net.URLClassLoader$1.run(URLClassLoader.java:368)
+  at java.net.URLClassLoader$1.run(URLClassLoader.java:362)
+  at java.security.AccessController.doPrivileged(Native Method)
+  at java.net.URLClassLoader.findClass(URLClassLoader.java:361)
+  at java.lang.ClassLoader.loadClass(ClassLoader.java:424)
+  at sun.misc.Launcher$AppClassLoader.loadClass(Launcher.java:349)
+  at java.lang.ClassLoader.loadClass(ClassLoader.java:411)
+  at java.lang.ClassLoader.loadClass(ClassLoader.java:411)
+  at java.lang.ClassLoader.loadClass(ClassLoader.java:357)
+  at java.lang.Class.forName0(Native Method)
+  at java.lang.Class.forName(Class.java:348)
+  at java.util.ServiceLoader$LazyIterator.nextService(ServiceLoader.java:370)
+  at java.util.ServiceLoader$LazyIterator.next(ServiceLoader.java:404)
+  at java.util.ServiceLoader$1.next(ServiceLoader.java:480)
+  at javax.imageio.spi.IIORegistry.registerApplicationClasspathSpis(IIORegistry.java:210)
+  at javax.imageio.spi.IIORegistry.<init>(IIORegistry.java:138)
+  at javax.imageio.spi.IIORegistry.getDefaultInstance(IIORegistry.java:159)
+  at javax.imageio.ImageIO.<clinit>(ImageIO.java:66)
+  at org.canova.image.recordreader.BaseImageRecordReader.<clinit>(BaseImageRecordReader.java:72)
+  ... 49 elided
+Caused by: java.lang.ClassNotFoundException: com.twelvemonkeys.imageio.spi.ImageReaderSpiBase
+  at java.net.URLClassLoader.findClass(URLClassLoader.java:381)
+  at java.lang.ClassLoader.loadClass(ClassLoader.java:424)
+  at sun.misc.Launcher$AppClassLoader.loadClass(Launcher.java:349)
+  at java.lang.ClassLoader.loadClass(ClassLoader.java:357)
+  ... 73 more
+
+
+val LABELS = Seq("airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck")
+val mapLabels = LABELS.zipWithIndex.toMap
+mapLabels: scala.collection.immutable.Map[String,Int] = Map(deer -> 4, bird -> 2, dog -> 5, horse -> 7, automobile -> 1, truck -> 9, frog -> 6, ship -> 8, airplane -> 0, cat -> 3)
+
+val rdd = sc.textFile("spark/cifar-10/trainLabels.csv")
+val rdd1 = rdd.map( x => x.split(",")).map( x => x(1)).map( x => try { mapLabels(x) } catch { case _ : Throwable => x } )
+rdd1.saveAsTextFile("spark/cifar-10/trainLabelsMap.csv")
+
+
+import org.canova.api.io.WritableConverter;
+import org.canova.api.io.converters.WritableConverterException;
+import org.canova.api.io.data.IntWritable;
+import org.canova.api.io.data.Text;
+import org.canova.api.records.reader.RecordReader;
+import org.canova.api.records.reader.impl.CSVRecordReader;
+import org.canova.api.records.reader.impl.ComposableRecordReader;
+import org.canova.api.split.FileSplit;
+import org.canova.api.writable.Writable;
+import org.canova.image.recordreader.ImageRecordReader;
+import org.deeplearning4j.datasets.canova.RecordReaderDataSetIterator;
+import org.deeplearning4j.datasets.iterator.DataSetIterator;
+import org.deeplearning4j.eval.Evaluation;
+import org.deeplearning4j.nn.api.OptimizationAlgorithm;
+import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
+import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
+import org.deeplearning4j.nn.conf.layers.ConvolutionLayer;
+import org.deeplearning4j.nn.conf.layers.DenseLayer;
+import org.deeplearning4j.nn.conf.layers.OutputLayer;
+import org.deeplearning4j.nn.conf.layers.SubsamplingLayer;
+import org.deeplearning4j.nn.conf.preprocessor.CnnToFeedForwardPreProcessor;
+import org.deeplearning4j.nn.conf.preprocessor.FeedForwardToCnnPreProcessor;
+import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
+import org.deeplearning4j.nn.weights.WeightInit;
+import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.optimize.listeners.ScoreIterationListener;
+import org.nd4j.linalg.api.ndarray.INDArray;
+import org.nd4j.linalg.dataset.DataSet;
+import org.nd4j.linalg.dataset.SplitTestAndTrain;
+import org.nd4j.linalg.factory.Nd4j;
+import org.nd4j.linalg.lossfunctions.LossFunctions;
+//import org.slf4j.Logger;
+//import org.slf4j.LoggerFactory;
+
+val WIDTH = 32;
+val HEIGHT = 32;
+
+val BATCH_SIZE = 128;
+val ITERATIONS = 20;
+
+val SEED = 123;
+val LABEL_SIZE = 10;
+
+val splitTrainNum:Int = (BATCH_SIZE * 0.8).toInt
+
+val builder = new NeuralNetConfiguration.Builder().
+  seed(SEED).
+//  batchSize(BATCH_SIZE).
+  iterations(ITERATIONS).
+  updater(org.deeplearning4j.nn.conf.Updater.NESTEROVS).momentum(0.9).
+  regularization(true).l2(0.001).
+  learningRate(0.001).
+//  constrainGradientToUnitNorm(true).
+  optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).
+  list(6).
+  layer(0, new ConvolutionLayer.Builder(3, 3).
+    nIn(3).
+    nOut(32).
+    stride(1, 1).
+    activation("relu").
+    weightInit(WeightInit.XAVIER).
+    build()).
+  layer(1, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX).
+    kernelSize(2,2).
+    stride(2,2).
+    build()).
+  layer(2, new ConvolutionLayer.Builder(3, 3).
+    nIn(32).
+    nOut(64).
+    stride(1, 1).
+    activation("relu").
+    weightInit(WeightInit.XAVIER).
+    build()).
+  layer(3, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX).
+    kernelSize(2,2).
+    stride(2,2).
+    build()).
+  layer(4, new DenseLayer.Builder().
+    nIn(64 * 3 * 3).
+    nOut(1000).
+    activation("relu").
+    weightInit(WeightInit.XAVIER).
+    dropOut(0.5).
+    build()).
+  layer(5, new OutputLayer.Builder(LossFunctions.LossFunction.NEGATIVELOGLIKELIHOOD).
+    nIn(1000).
+    nOut(LABEL_SIZE).
+    dropOut(0.5).
+    activation("softmax").
+    weightInit(WeightInit.XAVIER).
+    build()).
+//  layer(5, new OutputLayer.Builder(LossFunctions.LossFunction.MSE).
+//    nIn(1000).
+//    nOut(LABEL_SIZE).
+//    dropOut(0.5).
+//    weightInit(WeightInit.XAVIER).
+//    build()).
+//  inputPreProcessor(0, new FeedForwardToCnnPreProcessor(WIDTH, HEIGHT, 1)).
+//  inputPreProcessor(4, new CnnToFeedForwardPreProcessor()).
+  backprop(true).pretrain(false)
+
+import org.deeplearning4j.nn.conf.layers.setup.ConvolutionLayerSetup
+new ConvolutionLayerSetup(builder, WIDTH, HEIGHT, 3)
+
+val multiLayerConf:MultiLayerConfiguration = builder.build()
+
+val model = new MultiLayerNetwork(multiLayerConf)
+model.init()
+
+import java.io.File
+import java.util.ArrayList
+import java.util.Arrays
+import java.util.List
+import java.util.Random
+
+val imageReader = new ImageRecordReader(WIDTH, HEIGHT, 3, false)
+imageReader.initialize(new FileSplit(new File(System.getProperty("user.home"), "spark/cifar-10/train")))
+
+val labelsReader = new CSVRecordReader()
+labelsReader.initialize(new FileSplit(new File(System.getProperty("user.home"), "spark/cifar-10/trainLabelsMapped.csv")))
+
+val recordReader = new ComposableRecordReader(imageReader, labelsReader)
+val dataSetIterator = new RecordReaderDataSetIterator(recordReader, BATCH_SIZE, WIDTH*HEIGHT*3, LABEL_SIZE)
+
+val cifarDataSet = dataSetIterator.next()
+val trainAndTest = cifarDataSet.splitTestAndTrain(splitTrainNum, new Random(SEED))
+val trainInput = trainAndTest.getTrain()
+val testInput = trainAndTest.getTest()
+
+val nEpochs = 5
+(0 until nEpochs).foreach{i => 
+  // Train the model
+  model.fit(trainInput)
+  
+  // Evaluate the model
+  val eval = new Evaluation()
+  val output = model.output(testInput.getFeatureMatrix)
+  eval.eval(testInput.getLabels,output)
+  println("Statistics..."+eval.stats())
+  
+  // in more complex scenarios, a confusion matrix is quite helpful
+  //println(eval.getConfusionMatrix())
+}

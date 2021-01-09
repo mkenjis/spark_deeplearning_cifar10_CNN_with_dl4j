@@ -1,0 +1,196 @@
+import org.canova.api.io.WritableConverter;
+import org.canova.api.io.converters.WritableConverterException;
+import org.canova.api.io.data.IntWritable;
+import org.canova.api.io.data.Text;
+import org.canova.api.records.reader.RecordReader;
+import org.canova.api.records.reader.impl.CSVRecordReader;
+import org.canova.api.records.reader.impl.ComposableRecordReader;
+import org.canova.api.split.FileSplit;
+import org.canova.api.writable.Writable;
+import org.canova.image.recordreader.ImageRecordReader;
+import org.deeplearning4j.datasets.canova.RecordReaderDataSetIterator;
+import org.deeplearning4j.datasets.iterator.DataSetIterator;
+
+import java.io.File
+import java.util.ArrayList
+import java.util.Arrays
+import java.util.List
+import java.util.Random
+
+val LABELS = Seq("airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck")
+val mapLabelsIdx = LABELS.zipWithIndex.toMap
+
+val labelsReader = new CSVRecordReader()
+labelsReader.initialize(new FileSplit(new File(System.getProperty("user.home"), "spark/cifar-10/trainLabels99.csv")))
+
+import scala.collection.mutable.Map
+var mapFileLabel = scala.collection.mutable.Map[String,Int]("" -> 0)
+
+while (labelsReader.hasNext) {
+  val lbl = labelsReader.next
+  val lblarr = lbl.toArray
+  val arr = lblarr.toSeq.map( x => x.toString).toArray
+  mapFileLabel += (arr(0) -> mapLabelsIdx(arr(1)).toInt)
+}
+
+
+val imageReader = new ImageRecordReader(32, 32, 3, false)
+imageReader.initialize(new FileSplit(new File(System.getProperty("user.home"), "spark/cifar-10/temp")))
+
+import scala.collection.mutable.ArrayBuffer
+var data = scala.collection.mutable.ArrayBuffer[Array[Double]]()
+var label = scala.collection.mutable.ArrayBuffer[Array[Double]]()
+
+while (imageReader.hasNext) {
+  val img = imageReader.next
+  val imgarr = img.toArray
+  val arr = imgarr.toSeq.map( x => x.toString.toDouble).toArray
+  data ++= ArrayBuffer(arr)
+  
+  val path = imageReader.getCurrentFile
+  val fname = path.getName
+  val idx = fname.slice(0,fname.indexOf("."))
+  label ++= ArrayBuffer(mapFileLabel(idx) match {
+    case 0 => Array(1.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
+    case 1 => Array(0.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
+    case 2 => Array(0.0,0.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
+    case 3 => Array(0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0)
+    case 4 => Array(0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,0.0)
+    case 5 => Array(0.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0)
+    case 6 => Array(0.0,0.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0)
+    case 7 => Array(0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0)
+    case 8 => Array(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,0.0)
+    case 9 => Array(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0)
+  })
+}
+
+val data1 = data.toArray
+val label1 = label.toArray
+
+import org.nd4j.linalg.factory.Nd4j
+import org.nd4j.linalg.api.ndarray.INDArray
+
+val input = Nd4j.create(data1)
+val labels = Nd4j.create(label1)
+
+import org.nd4j.linalg.dataset.DataSet
+var cifar: DataSet = new DataSet(input,labels)
+
+cifar.shuffle()
+val testAndTrain = cifar.splitTestAndTrain(0.80)
+val trainInput = testAndTrain.getTrain
+val testInput = testAndTrain.getTest
+
+
+import org.deeplearning4j.eval.Evaluation;
+import org.deeplearning4j.nn.api.OptimizationAlgorithm;
+import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
+import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
+import org.deeplearning4j.nn.conf.layers.ConvolutionLayer;
+import org.deeplearning4j.nn.conf.layers.DenseLayer;
+import org.deeplearning4j.nn.conf.layers.OutputLayer;
+import org.deeplearning4j.nn.conf.layers.SubsamplingLayer;
+import org.deeplearning4j.nn.conf.preprocessor.CnnToFeedForwardPreProcessor;
+import org.deeplearning4j.nn.conf.preprocessor.FeedForwardToCnnPreProcessor;
+import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
+import org.deeplearning4j.nn.weights.WeightInit;
+import org.deeplearning4j.optimize.api.IterationListener;
+import org.deeplearning4j.optimize.listeners.ScoreIterationListener;
+import org.nd4j.linalg.api.ndarray.INDArray;
+import org.nd4j.linalg.dataset.DataSet;
+import org.nd4j.linalg.dataset.SplitTestAndTrain;
+import org.nd4j.linalg.factory.Nd4j;
+import org.nd4j.linalg.lossfunctions.LossFunctions;
+//import org.slf4j.Logger;
+//import org.slf4j.LoggerFactory;
+
+val WIDTH = 32;
+val HEIGHT = 32;
+
+val BATCH_SIZE = 100;
+val ITERATIONS = 10;
+
+val SEED = 123;
+val LABEL_SIZE = 10;
+
+val splitTrainNum:Int = (BATCH_SIZE * 0.8).toInt
+val listenerFreq = ITERATIONS / 5
+
+val builder = new NeuralNetConfiguration.Builder().
+  seed(SEED).
+//  batchSize(BATCH_SIZE).
+  iterations(ITERATIONS).
+  momentum(0.9).
+  regularization(true).
+  constrainGradientToUnitNorm(true).
+  optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).
+  list(6).
+  layer(0, new ConvolutionLayer.Builder(5, 5).
+    nIn(3).
+    nOut(20).
+    stride(1, 1).
+    activation("relu").
+    weightInit(WeightInit.XAVIER).
+    build()).
+  layer(1, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX).
+    kernelSize(2,2).
+    stride(2,2).
+    build()).
+  layer(2, new ConvolutionLayer.Builder(5, 5).
+    nIn(20).
+    nOut(40).
+    stride(1, 1).
+    activation("relu").
+    weightInit(WeightInit.XAVIER).
+    build()).
+  layer(3, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX).
+    kernelSize(2,2).
+    stride(2,2).
+    build()).
+  layer(4, new DenseLayer.Builder().
+    nIn(40 * 5 * 5).
+    nOut(1000).
+    activation("relu").
+    weightInit(WeightInit.XAVIER).
+    dropOut(0.5).
+    build()).
+  layer(5, new OutputLayer.Builder(LossFunctions.LossFunction.NEGATIVELOGLIKELIHOOD).
+    nIn(1000).
+    nOut(LABEL_SIZE).
+    dropOut(0.5).
+    activation("softmax").
+    weightInit(WeightInit.XAVIER).
+    build()).
+//  layer(5, new OutputLayer.Builder(LossFunctions.LossFunction.MSE).
+//    nIn(1000).
+//    nOut(LABEL_SIZE).
+//    dropOut(0.5).
+//    weightInit(WeightInit.XAVIER).
+//    build()).
+//  inputPreProcessor(0, new FeedForwardToCnnPreProcessor(WIDTH, HEIGHT, 1)).
+//  inputPreProcessor(4, new CnnToFeedForwardPreProcessor()).
+  backprop(true).pretrain(false)
+
+import org.deeplearning4j.nn.conf.layers.setup.ConvolutionLayerSetup
+new ConvolutionLayerSetup(builder, WIDTH, HEIGHT, 3)
+
+val multiLayerConf:MultiLayerConfiguration = builder.build()
+
+val model = new MultiLayerNetwork(multiLayerConf)
+model.init()
+
+
+val nEpochs = 5
+(0 until nEpochs).foreach{i => 
+  // Train the model
+  model.fit(trainInput)
+  
+  // Evaluate the model
+  val eval = new Evaluation()
+  val output = model.output(testInput.getFeatureMatrix)
+  eval.eval(testInput.getLabels,output)
+  println("Statistics..."+eval.stats())
+  
+  // in more complex scenarios, a confusion matrix is quite helpful
+  //println(eval.getConfusionMatrix())
+}
